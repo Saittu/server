@@ -1,7 +1,7 @@
 import dayjs from 'dayjs'
 import { db } from '../db'
 import { goalCompletions, goals } from '../db/schema'
-import { and, count, eq, gte, lte, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gte, lte, sql } from 'drizzle-orm'
 
 export async function getWeekSummary() {
   const firstDayOfWeek = dayjs().startOf('week').toDate()
@@ -37,8 +37,8 @@ export async function getWeekSummary() {
           lte(goalCompletions.createdAt, lastDayOfWeek)
         )
       )
+      .orderBy(desc(goalCompletions.createdAt))
   )
-
   const goalsCompleteByWeekDay = db.$with('goals_completed_by_week_day').as(
     db
       .select({
@@ -47,7 +47,7 @@ export async function getWeekSummary() {
             JSON_AGG(
                JSON_BUILD_OBJECT(
                 'id', ${goalCompletions.id},
-                'title', ${goalCompletions.id},
+                'title', ${goals.title},
                 'completedAt', ${goalsCompletedInWeek.completedAt}
                ) 
             )
@@ -55,7 +55,17 @@ export async function getWeekSummary() {
       })
       .from(goalsCompletedInWeek)
       .groupBy(goalsCompletedInWeek.completedAtDate)
+      .orderBy(desc(goalsCompletedInWeek.completedAtDate))
   )
+
+  type GoalsPerDay = Record<
+    string,
+    {
+      id: string
+      title: string
+      completedAt: string
+    }[]
+  >
 
   const result = await db
     .with(goalsCreatedUpToWeek, goalsCompletedInWeek, goalsCompleteByWeekDay)
@@ -66,7 +76,7 @@ export async function getWeekSummary() {
       total: sql /*sql*/`
             (SELECT SUM(${goalsCreatedUpToWeek.desiredWeeklyFrequency}) FROM ${goalsCreatedUpToWeek})
         `.mapWith(Number),
-      goalsPerDay: sql /*sql*/`
+      goalsPerDay: sql /*sql*/<GoalsPerDay>`
             JSON_OBJECT_AGG(
                 ${goalsCompleteByWeekDay.completedAtDate},
                 ${goalsCompleteByWeekDay.completions}
@@ -76,6 +86,6 @@ export async function getWeekSummary() {
     .from(goalsCompleteByWeekDay)
 
   return {
-    summary: result,
+    summary: result[0],
   }
 }
